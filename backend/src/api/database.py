@@ -18,8 +18,8 @@ SessionLocal = async_sessionmaker(
 
 Base = declarative_base()
 
-async def get_db(request: Request):
-    db = await SessionLocal()
+async def get_db():
+    db = SessionLocal()
     try:
         yield db
     finally:
