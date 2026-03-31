@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated, Optional
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, StringConstraints
 
@@ -41,10 +42,20 @@ class PinResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class BoardResponse(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = None
+    is_private: bool = False
+    created_at: datetime
+    user_id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
 class BoardCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
     is_private: bool = False
+
 
 class TokenData(BaseModel):
     username: Optional[str] = None

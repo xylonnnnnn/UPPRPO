@@ -18,7 +18,7 @@ from google_auth import oauth
 from database import get_db, Base, init_db
 from models import User, Pin, Board
 from schemas import UserCreate, Token, TokenData, VerifyEmail, PinCreate, PinResponse, \
-    UserDelete
+    UserDelete, BoardCreate, BoardResponse
 from auth import (
     authenticate_user,
     create_access_token,
@@ -150,6 +150,27 @@ async def auth_google(request: Request, db: AsyncSession = Depends(get_db)):
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
+@app.post("/create/board", response_model=BoardResponse)
+async def create_board(board: BoardCreate,
+                        db: AsyncSession = Depends(get_db),
+                        current_user: User = Depends(get_current_user)):
+
+    if (await db.execute(
+            select(Board).where((Board.name == board.name) & (Board.user_id == current_user.id)))
+        ).scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="доска с таким именем уже есть")
+
+    db_board = Board(
+        **board.model_dump(),
+        user_id=current_user.id
+    )
+
+    db.add(db_board)
+    await db.commit()
+    await db.refresh(db_board)
+
+    return db_board
+
 @app.post("/upload/image")
 async def upload_image(file: UploadFile = File(...)):
     print(f"🔍 Account ID: {CLOUDFLARE_ACCOUNT_ID}")
@@ -186,7 +207,7 @@ async def upload_image(file: UploadFile = File(...)):
     print(f"❌ Cloudflare error: {result}")
     raise HTTPException(status_code=500, detail=f"Ошибка загрузки: {result.get('errors', ['Unknown'])}")
 
-@app.post("/pins/", response_model=PinResponse)
+@app.post("/create/pins/", response_model=PinResponse)
 async def create_pin(
         pin: PinCreate,
         db: AsyncSession = Depends(get_db),
@@ -199,12 +220,12 @@ async def create_pin(
     if not board:
         raise HTTPException(status_code=404, detail="Доска не найдена или недоступна")
 
-    aspect_ratio = pin.image_width / pin.image_height if pin.image_width and pin.image_height else 1.0
+    # aspect_ratio = pin.image_width / pin.image_height if pin.image_width and pin.image_height else 1.0
 
     db_pin = Pin(
         **pin.model_dump(),
         user_id=current_user.id,
-        aspect_ratio=aspect_ratio,
+        # aspect_ratio=aspect_ratio,
         likes_count=0,
         saves_count=0
     )

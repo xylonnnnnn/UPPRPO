@@ -32,9 +32,9 @@ class Pin(Base):
     image_url = Column(String(500), nullable=True)
     link_url = Column(String(500), nullable=True)
 
-    image_width = Column(Integer, default=0)
-    image_height = Column(Integer, default=0)
-    aspect_ratio = Column(Float, default=1.0)
+    # image_width = Column(Integer, default=0)
+    # image_height = Column(Integer, default=0)
+    # aspect_ratio = Column(Float, default=1.0)
 
     likes_count = Column(Integer, default=0)
     saves_count = Column(Integer, default=0)
