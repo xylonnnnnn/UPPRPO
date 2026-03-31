@@ -23,34 +23,7 @@ class User(Base):
 
     boards = relationship("Board", back_populates="owner", cascade="all, delete-orphan")
     pins = relationship("Pin", back_populates="author", cascade="all, delete-orphan")
-
-class Pin(Base):
-    __tablename__ = "pins"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(200), nullable=False)
-    description = Column(Text, nullable=True)
-    image_url = Column(String(500), nullable=True)
-    link_url = Column(String(500), nullable=True)
-
-    # image_width = Column(Integer, default=0)
-    # image_height = Column(Integer, default=0)
-    # aspect_ratio = Column(Float, default=1.0)
-
-    likes_count = Column(Integer, default=0)
-    saves_count = Column(Integer, default=0)
-
-    user_id = Column(Integer, ForeignKey("web_users.id", ondelete="CASCADE"), nullable=False)
-    board_id = Column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False)
-
-    author = relationship("User", back_populates="pins")
-    board = relationship("Board", back_populates="pins")
-
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-
-    @property
-    def author_username(self) -> Optional[str]:
-        return self.author.username if self.author else None
+    pin_likes = relationship("PinLike", back_populates="user", cascade="all, delete-orphan")
 
 class Board(Base):
     __tablename__ = "boards"
@@ -65,3 +38,42 @@ class Board(Base):
     pins = relationship("Pin", back_populates="board", cascade="all, delete-orphan")
 
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class Pin(Base):
+    __tablename__ = "pins"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    image_url = Column(String(500), nullable=True)
+    link_url = Column(String(500), nullable=True)
+
+    # image_width = Column(Integer, default=0)
+    # image_height = Column(Integer, default=0)
+    # aspect_ratio = Column(Float, default=1.0)
+
+    likes_count = Column(Integer, default=0, nullable=False)
+    # saves_count = Column(Integer, default=0)
+
+    user_id = Column(Integer, ForeignKey("web_users.id", ondelete="CASCADE"), nullable=False)
+    board_id = Column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False)
+
+    author = relationship("User", back_populates="pins")
+    board = relationship("Board", back_populates="pins")
+    likes = relationship("PinLike", back_populates="pin", cascade="all, delete-orphan")
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    @property
+    def author_username(self) -> Optional[str]:
+        return self.author.username if self.author else None
+
+class PinLike(Base):
+    __tablename__ = "pin_lakes"
+    id = Column(Integer, primary_key=True, index=True)
+    pin_id = Column(Integer, ForeignKey("pins.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("web_users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    pin = relationship("Pin", back_populates="likes")
+    user = relationship("User", back_populates="pin_likes")

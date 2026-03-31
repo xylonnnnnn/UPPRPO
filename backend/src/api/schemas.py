@@ -37,7 +37,8 @@ class PinResponse(BaseModel):
     # image_width: Optional[int]
     # image_height: Optional[int]
     # aspect_ratio: Optional[float]
-    likes_count: int
+    likes_count: int = 0
+    is_liked: bool = False
     author_username: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)

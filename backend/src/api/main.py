@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from email_config import send_verification_email
 from google_auth import oauth
 from database import get_db, Base, init_db
-from models import User, Pin, Board
+from models import User, Pin, Board, PinLike
 from schemas import UserCreate, Token, TokenData, VerifyEmail, PinCreate, PinResponse, \
     UserDelete, BoardCreate, BoardResponse
 from auth import (
@@ -50,16 +50,16 @@ async def on_startup():
     await init_db()
     print("✅ База данных инициализирована")
 
-@app.get("/l")
+@app.get("/l", tags=["health check"])
 async def test():
     return {"code": generate_code()}
 
-@app.get("/gdb")
+@app.get("/gdb", tags=["health check"])
 async def gdb(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User))
     return result.scalars().all()
 
-@app.delete("/del_user")
+@app.delete("/del_user", tags=["delete"])
 async def delete_user(user: UserDelete, db: AsyncSession = Depends(get_db)):
     try:
         result = await db.execute(delete(User).where(User.username == user.username))
@@ -71,7 +71,7 @@ async def delete_user(user: UserDelete, db: AsyncSession = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.post("/register", status_code=status.HTTP_201_CREATED)
+@app.post("/register", status_code=status.HTTP_201_CREATED, tags=["mail"])
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
     existing_email = await get_user_by_email(db, user.email)
     print(user.email, existing_email)
@@ -90,7 +90,7 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
 
     return {"message": "Пользователь создан. Проверьте почту для подтверждения."}
 
-@app.post("/verify-email")
+@app.post("/verify-email", tags=["verify"])
 async def verify_email(data: VerifyEmail, db: AsyncSession = Depends(get_db)):
     success = await verify_user_email(db, data.email, str(data.code))
     if not success:
@@ -98,7 +98,7 @@ async def verify_email(data: VerifyEmail, db: AsyncSession = Depends(get_db)):
     return {"message": "Email подтвержден!"}
 
 
-@app.post("/token", response_model=Token)
+@app.post("/token", response_model=Token, tags=["mail"])
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     user = await authenticate_user(db, form_data.username, form_data.password)
     if not user:
@@ -117,13 +117,13 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@app.get("/login/google")
+@app.get("/login/google", tags=["google"])
 async def login_google(request: Request):
     redirect_uri = request.url_for('auth_google')
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
-@app.get("/auth/google")
+@app.get("/auth/google", tags=["google"])
 async def auth_google(request: Request, db: AsyncSession = Depends(get_db)):
     token = await oauth.google.authorize_access_token(request)
     user_info = token.get('userinfo')
@@ -150,7 +150,7 @@ async def auth_google(request: Request, db: AsyncSession = Depends(get_db)):
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.post("/create/board", response_model=BoardResponse)
+@app.post("/create/board", response_model=BoardResponse, tags=["Create"])
 async def create_board(board: BoardCreate,
                         db: AsyncSession = Depends(get_db),
                         current_user: User = Depends(get_current_user)):
@@ -207,7 +207,7 @@ async def upload_image(file: UploadFile = File(...)):
     print(f"❌ Cloudflare error: {result}")
     raise HTTPException(status_code=500, detail=f"Ошибка загрузки: {result.get('errors', ['Unknown'])}")
 
-@app.post("/create/pins/", response_model=PinResponse)
+@app.post("/create/pins/", response_model=PinResponse, tags=["Create"])
 async def create_pin(
         pin: PinCreate,
         db: AsyncSession = Depends(get_db),
@@ -235,6 +235,35 @@ async def create_pin(
     await db.refresh(db_pin)
 
     return db_pin
+
+@app.post("/pins/{pin_id}/like", response_model=PinResponse)
+async def toggle_like(
+        pin_id: int,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    pin = await db.get(Pin, pin_id)
+    if not pin:
+        raise HTTPException(status_code=404, detail="Pin not found")
+
+    like = (await db.execute(
+        select(PinLike).where((PinLike.pin_id == pin_id) & (current_user.id == PinLike.user_id))
+    )).scalar_one_or_none()
+
+    if like:
+        await db.delete(like)
+        pin.likes_count = max(0, pin.likes_count - 1)
+        action=False
+    else:
+        db.add(PinLike(pin_id=pin_id, user_id=current_user.id))
+        pin.likes_count += 1
+        action=True
+
+    await db.commit()
+    await db.refresh(pin)
+    pin.is_liked = action
+
+    return pin
 
 # @app.get("/users/me", response_model=UserResponse)
 # async def read_users_me(current_user: User = Depends(get_current_user)):
