@@ -5,20 +5,20 @@ from datetime import timedelta, datetime
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, Query
 from fastapi.params import File
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.orm import Session, declarative_base
+from sqlalchemy.orm import Session, declarative_base, selectinload, joinedload
 from starlette.middleware.sessions import SessionMiddleware
 
 from email_config import send_verification_email
 from google_auth import oauth
-from database import get_db, Base, init_db
+from database import get_db, Base, init_db, reset_database
 from models import User, Pin, Board, PinLike
 from schemas import UserCreate, Token, TokenData, VerifyEmail, PinCreate, PinResponse, \
-    UserDelete, BoardCreate, BoardResponse
+    UserDelete, BoardCreate, BoardResponse, PaginatedResponse, PaginationMeta
 from auth import (
     authenticate_user,
     create_access_token,
@@ -50,6 +50,11 @@ async def on_startup():
     await init_db()
     print("✅ База данных инициализирована")
 
+@app.delete("/reset")
+async def reset():
+    await reset_database()
+    return {"mes":"oke"}
+
 @app.get("/l", tags=["health check"])
 async def test():
     return {"code": generate_code()}
@@ -59,7 +64,7 @@ async def gdb(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User))
     return result.scalars().all()
 
-@app.delete("/del_user", tags=["delete"])
+@app.delete("/delete/user", tags=["delete"])
 async def delete_user(user: UserDelete, db: AsyncSession = Depends(get_db)):
     try:
         result = await db.execute(delete(User).where(User.username == user.username))
@@ -69,7 +74,39 @@ async def delete_user(user: UserDelete, db: AsyncSession = Depends(get_db)):
             return {"message": "success"}
         raise HTTPException(status_code=400, detail="Такого пользователя нет")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/delete/board/{board_id}", tags=["delete"])
+async def delete_board(
+        board_id:int,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    try:
+        result = await db.execute(delete(Board).where((Board.id == board_id) & (Board.user_id == current_user.id)))
+        await db.commit()
+
+        if result.rowcount:
+            return {"message": "success"}
+        return HTTPException(status_code=400, detail="Такой доски нет")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/delete/pin/{pin_id}", tags=["delete"])
+async def delete_pin(
+        pin_id:int,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    try:
+        result = await db.execute(delete(Pin).where((Pin.id == pin_id) & (Pin.user_id == current_user.id)))
+        await db.commit()
+
+        if result.rowcount:
+            return {"message": "success"}
+        return HTTPException(status_code=400, detail="Такого пина нет")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/register", status_code=status.HTTP_201_CREATED, tags=["mail"])
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -92,7 +129,7 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
 
 @app.post("/verify-email", tags=["verify"])
 async def verify_email(data: VerifyEmail, db: AsyncSession = Depends(get_db)):
-    success = await verify_user_email(db, data.email, str(data.code))
+    success = await verify_user_email(db, data.email, data.code)
     if not success:
         raise HTTPException(status_code=400, detail="Неверный код или код истёк")
     return {"message": "Email подтвержден!"}
@@ -214,7 +251,8 @@ async def create_pin(
         current_user: User = Depends(get_current_user)
 ):
     board_result = await db.execute(
-        select(Board).where((Board.id == pin.board_id) & (Board.user_id == current_user.id))
+        select(Board)
+        .where((Board.id == pin.board_id) & (Board.user_id == current_user.id))
     )
     board = board_result.scalar_one_or_none()
     if not board:
@@ -226,15 +264,16 @@ async def create_pin(
         **pin.model_dump(),
         user_id=current_user.id,
         # aspect_ratio=aspect_ratio,
-        likes_count=0,
-        saves_count=0
+        likes_count=0
     )
 
     db.add(db_pin)
     await db.commit()
     await db.refresh(db_pin)
 
-    return db_pin
+    result = (await db.execute(select(Pin).where(db_pin.id == Pin.id).options(joinedload(Pin.author)))).scalar_one_or_none()
+
+    return result
 
 @app.post("/pins/{pin_id}/like", response_model=PinResponse)
 async def toggle_like(
@@ -264,6 +303,59 @@ async def toggle_like(
     pin.is_liked = action
 
     return pin
+
+@app.get("/pins", response_model=PaginatedResponse[PinResponse])
+async def get_pins(
+        page:int = Query(1, ge=1, description="Номер страницы"),
+        size:int = Query(20, ge=1, le=100, description="Размер страницы"),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    offset = (page - 1) * size
+
+    query = select(Pin).options(
+        selectinload(Pin.author)  # Загружаем автора сразу
+    )
+
+    query = query.order_by(Pin.created_at.desc())
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar_one()
+
+    query = query.limit(size).offset(offset)
+    result = await db.execute(query)
+    pins = result.scalars().all()
+
+    liked_pin_ids = set()
+    if current_user and pins:
+        pin_ids = [pin.id for pin in pins]
+
+        likes_result = await db.execute(
+            select(PinLike.pin_id).where(
+                (PinLike.pin_id.in_(pin_ids)) &
+                (PinLike.user_id == current_user.id)
+            )
+        )
+        liked_pin_ids = set(likes_result.scalars().all())
+
+    for pin in pins:
+        pin.is_liked = pin.id in liked_pin_ids
+
+    total_pages = (total + size - 1) // size
+
+    items = [pin for pin in pins]
+
+    meta = PaginationMeta(
+        page=page,
+        size=size,
+        total=total,
+        pages=total_pages,
+        has_next=page < total_pages,  # Если страница 2 из 8 → True
+        has_prev=page > 1  # Если страница 1 → False
+    )
+
+    return PaginatedResponse(items=items, meta=meta)
 
 # @app.get("/users/me", response_model=UserResponse)
 # async def read_users_me(current_user: User = Depends(get_current_user)):

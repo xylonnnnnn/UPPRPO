@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Annotated, Optional, TypeVar, Generic, List
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, StringConstraints, computed_field
 
 
@@ -11,6 +11,12 @@ class UserCreate(BaseModel):
 class UserDelete(BaseModel):
     username: Annotated[str, StringConstraints(min_length=3, max_length=50)]
     password: Annotated[str, StringConstraints(min_length=6)]
+
+class UserPublic(BaseModel):
+    id: int
+    username: str
+
+    model_config = ConfigDict(from_attributes=True)
 
 class VerifyEmail(BaseModel):
     email: EmailStr
@@ -39,7 +45,7 @@ class PinResponse(BaseModel):
     # aspect_ratio: Optional[float]
     likes_count: int = 0
     is_liked: bool = False
-    author_username: Optional[str] = None
+    author: UserPublic
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -60,3 +66,24 @@ class BoardCreate(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+class PaginationParams(BaseModel):
+    page: int = Field(1, ge=1, description="Номер страницы (начинается с 1)")
+    size: int = Field(20, ge=1, le=100, description="Элементов на страницу (макс 100)")
+
+class PaginationMeta(BaseModel):
+    page: int
+    size: int
+    total: int           # Всего записей в базе
+    pages: int           # Всего страниц
+    has_next: bool       # Есть ли следующая страница
+    has_prev: bool       # Есть ли предыдущая страница
+
+T = TypeVar('T')
+
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    items: List[T]  # Список объектов (пинов)
+    meta: PaginationMeta  # Метаданные
+
+    model_config = ConfigDict(from_attributes=True)

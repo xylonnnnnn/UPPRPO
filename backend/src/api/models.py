@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Float, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Mapped
 
 from database import Base
 
@@ -58,15 +58,11 @@ class Pin(Base):
     user_id = Column(Integer, ForeignKey("web_users.id", ondelete="CASCADE"), nullable=False)
     board_id = Column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False)
 
-    author = relationship("User", back_populates="pins")
+    author: Mapped["User"] = relationship("User", back_populates="pins")
     board = relationship("Board", back_populates="pins")
     likes = relationship("PinLike", back_populates="pin", cascade="all, delete-orphan")
 
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
-
-    @property
-    def author_username(self) -> Optional[str]:
-        return self.author.username if self.author else None
 
 class PinLike(Base):
     __tablename__ = "pin_lakes"
