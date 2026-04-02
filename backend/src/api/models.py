@@ -24,6 +24,7 @@ class User(Base):
     boards = relationship("Board", back_populates="owner", cascade="all, delete-orphan")
     pins = relationship("Pin", back_populates="author", cascade="all, delete-orphan")
     pin_likes = relationship("PinLike", back_populates="user", cascade="all, delete-orphan")
+    comments = relationship("PinComments", back_populates="user", cascade="all, delete-orphan")
 
 class Board(Base):
     __tablename__ = "boards"
@@ -57,12 +58,13 @@ class Pin(Base):
 
     user_id = Column(Integer, ForeignKey("web_users.id", ondelete="CASCADE"), nullable=False)
     board_id = Column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     author: Mapped["User"] = relationship("User", back_populates="pins")
     board = relationship("Board", back_populates="pins")
     likes = relationship("PinLike", back_populates="pin", cascade="all, delete-orphan")
+    comments = relationship("PinComments", back_populates="pin", cascade="all, delete-orphan")
 
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 class PinLike(Base):
     __tablename__ = "pin_lakes"
@@ -73,3 +75,14 @@ class PinLike(Base):
 
     pin = relationship("Pin", back_populates="likes")
     user = relationship("User", back_populates="pin_likes")
+
+class PinComments(Base):
+    __tablename__ = "pin_comments"
+    id = Column(Integer, primary_key=True, index=True)
+    pin_id = Column(Integer, ForeignKey("pins.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("web_users.id", ondelete="CASCADE"), nullable=False)
+    comment = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    pin = relationship("Pin", back_populates="comments")
+    user = relationship("User", back_populates="comments")

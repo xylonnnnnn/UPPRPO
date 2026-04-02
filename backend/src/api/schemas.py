@@ -35,6 +35,13 @@ class PinCreate(BaseModel):
     # image_width: Optional[int] = None
     # image_height: Optional[int] = None
 
+class CommentsResponse(BaseModel):
+    comment: str
+    created_at: datetime
+    user: UserPublic
+
+    model_config = ConfigDict(from_attributes=True)
+
 class PinResponse(BaseModel):
     id: int
     title: str
@@ -46,6 +53,7 @@ class PinResponse(BaseModel):
     likes_count: int = 0
     is_liked: bool = False
     author: UserPublic
+    comments: List[CommentsResponse]
 
     model_config = ConfigDict(from_attributes=True)
 

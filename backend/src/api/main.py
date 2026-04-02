@@ -5,7 +5,7 @@ from datetime import timedelta, datetime
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, Query
+from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, Query, Body
 from fastapi.params import File
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, delete, func
@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from email_config import send_verification_email
 from google_auth import oauth
 from database import get_db, Base, init_db, reset_database
-from models import User, Pin, Board, PinLike
+from models import User, Pin, Board, PinLike, PinComments
 from schemas import UserCreate, Token, TokenData, VerifyEmail, PinCreate, PinResponse, \
     UserDelete, BoardCreate, BoardResponse, PaginatedResponse, PaginationMeta
 from auth import (
@@ -144,12 +144,12 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             detail="Неверный логин или пароль",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if user == "not_verified":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Email не подтвержден",
-        )
-
+    # if user == "not_verified":
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail="Email не подтвержден",
+    #     )
+    # print(user)
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -271,7 +271,7 @@ async def create_pin(
     await db.commit()
     await db.refresh(db_pin)
 
-    result = (await db.execute(select(Pin).where(db_pin.id == Pin.id).options(joinedload(Pin.author)))).scalar_one_or_none()
+    result = (await db.execute(select(Pin).where(db_pin.id == Pin.id).options(joinedload(Pin.author),selectinload(Pin.comments)))).scalar_one_or_none()
 
     return result
 
@@ -299,10 +299,29 @@ async def toggle_like(
         action=True
 
     await db.commit()
-    await db.refresh(pin)
+    await db.refresh(pin, attribute_names=["comments"])
     pin.is_liked = action
 
     return pin
+
+@app.post("/pins/{pin_id}/add_comment", response_model=PinResponse)
+async def add_comment(
+        pin_id: int,
+        comment: str = Body(..., min_length=1, description="Содержание комментария"),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    pin = await db.get(Pin, pin_id)
+    if not pin:
+        raise HTTPException(status_code=404, detail="Pin not found")
+
+    db.add(PinComments(pin_id=pin_id, comment=comment, user_id=current_user.id))
+
+    await db.commit()
+    await db.refresh(pin, attribute_names=["comments"])
+
+    return PinResponse.model_validate(pin)
+
 
 @app.get("/pins", response_model=PaginatedResponse[PinResponse])
 async def get_pins(
@@ -314,7 +333,8 @@ async def get_pins(
     offset = (page - 1) * size
 
     query = select(Pin).options(
-        selectinload(Pin.author)  # Загружаем автора сразу
+        selectinload(Pin.author),  # Загружаем автора сразу
+        selectinload(Pin.comments)
     )
 
     query = query.order_by(Pin.created_at.desc())
