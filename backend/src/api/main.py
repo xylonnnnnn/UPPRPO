@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -5,14 +6,21 @@ from datetime import timedelta, datetime
 
 import httpx
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+import redis.asyncio as aioredis
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.redis import RedisBackend
+from fastapi_cache.decorator import cache
 from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, Query, Body
 from fastapi.params import File
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from schemas import PinResponse
 from sqlalchemy.orm import Session, declarative_base, selectinload, joinedload
 from starlette.middleware.sessions import SessionMiddleware
 
+from cache import pins_key_builder, invalidate_pins_cache
 from email_config import send_verification_email
 from google_auth import oauth
 from database import get_db, Base, init_db, reset_database
@@ -35,8 +43,25 @@ CLOUDFLARE_IMAGES_API_KEY = os.getenv("CF_IMAGES_API_KEY")
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
 
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title="FastAPI Auth System")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    print("BD инициализирована")
+    redis = aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+    FastAPICache.init(
+        RedisBackend(redis),
+        prefix="onlyfansRuslana:",
+        key_builder=pins_key_builder,
+        expire=60,
+        enable=True
+    )
+    logger.info("FastAPICache initialized with Redis")
+    yield
+    await redis.aclose()
+
+app = FastAPI(title="FastAPI Auth System", lifespan=lifespan)
 
 app.add_middleware(
     SessionMiddleware,
@@ -44,11 +69,6 @@ app.add_middleware(
     https_only=False,
     max_age=3600
 )
-
-@app.on_event("startup")
-async def on_startup():
-    await init_db()
-    print("✅ База данных инициализирована")
 
 @app.delete("/reset")
 async def reset():
@@ -71,6 +91,7 @@ async def delete_user(user: UserDelete, db: AsyncSession = Depends(get_db)):
         await db.commit()
 
         if result.rowcount:
+            await invalidate_pins_cache()
             return {"message": "success"}
         raise HTTPException(status_code=400, detail="Такого пользователя нет")
     except Exception as e:
@@ -98,6 +119,7 @@ async def delete_board(
             )
         await db.delete(board)
         await db.commit()
+        await invalidate_pins_cache()
         return {"message": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -125,6 +147,7 @@ async def delete_pin(
             )
         await db.delete(pin)
         await db.commit()
+        await invalidate_pins_cache()
         return {"message": "success"}
 
     except Exception as e:
@@ -164,6 +187,7 @@ async def delete_comment(
         await db.delete(comment)
         await db.commit()
 
+        await invalidate_pins_cache()
         return {"message": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -334,6 +358,7 @@ async def create_pin(
 
     result = (await db.execute(select(Pin).where(db_pin.id == Pin.id).options(joinedload(Pin.author),selectinload(Pin.comments)))).scalar_one_or_none()
 
+    await invalidate_pins_cache()
     return result
 
 @app.post("/pins/{pin_id}/like", response_model=PinResponse)
@@ -362,7 +387,7 @@ async def toggle_like(
     await db.commit()
     await db.refresh(pin, attribute_names=["comments"])
     pin.is_liked = action
-
+    await invalidate_pins_cache()
     return pin
 
 @app.post("/pins/{pin_id}/add_comment", response_model=PinResponse)
@@ -381,10 +406,12 @@ async def add_comment(
     await db.commit()
     await db.refresh(pin, attribute_names=["comments"])
 
+    await invalidate_pins_cache()
     return PinResponse.model_validate(pin)
 
 
 @app.get("/pins", response_model=PaginatedResponse[PinResponse])
+@cache(expire=90, key_builder=pins_key_builder)
 async def get_pins(
         page:int = Query(1, ge=1, description="Номер страницы"),
         size:int = Query(20, ge=1, le=100, description="Размер страницы"),
@@ -425,15 +452,15 @@ async def get_pins(
 
     total_pages = (total + size - 1) // size
 
-    items = [pin for pin in pins]
+    items = [PinResponse.model_validate(pin) for pin in pins]
 
     meta = PaginationMeta(
         page=page,
         size=size,
         total=total,
         pages=total_pages,
-        has_next=page < total_pages,  # Если страница 2 из 8 → True
-        has_prev=page > 1  # Если страница 1 → False
+        has_next=page < total_pages,
+        has_prev=page > 1
     )
 
     return PaginatedResponse(items=items, meta=meta)
