@@ -39,7 +39,7 @@ async def invalidate_pins_cache():
             return
 
         redis = backend.redis
-        async for key in redis.scan_iter("cache:*:pins_list:*"):
+        async for key in redis.scan_iter("*pins*"):
             await redis.delete(key)
             logger.debug(f"Invalidated cache key: {key}")
 

@@ -18,7 +18,9 @@ from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from schemas import PinResponse
 from sqlalchemy.orm import Session, declarative_base, selectinload, joinedload
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from cache import pins_key_builder, invalidate_pins_cache
 from email_config import send_verification_email
@@ -45,11 +47,21 @@ ALGORITHM = os.getenv("ALGORITHM")
 
 logger = logging.getLogger(__name__)
 
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        # Запрещаем браузеру кешировать ответы API
+        if request.url.path.startswith("/pins") or request.url.path.startswith("/api"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
-    print("BD инициализирована")
-    redis = aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+    # await init_db()
+    # print("BD инициализирована")
+    redis = aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
     FastAPICache.init(
         RedisBackend(redis),
         prefix="onlyfansRuslana:",
@@ -59,7 +71,7 @@ async def lifespan(app: FastAPI):
     )
     logger.info("FastAPICache initialized with Redis")
     yield
-    await redis.aclose()
+    await redis.close()
 
 app = FastAPI(title="FastAPI Auth System", lifespan=lifespan)
 
@@ -69,6 +81,23 @@ app.add_middleware(
     https_only=False,
     max_age=3600
 )
+
+# 🔹 2. CORSMiddleware (для фронтенда)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8080",
+        "http://localhost:8081",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:8081",
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.add_middleware(NoCacheMiddleware)
 
 @app.delete("/reset")
 async def reset():
@@ -270,7 +299,11 @@ async def auth_google(request: Request, db: AsyncSession = Depends(get_db)):
             await db.commit()
 
     access_token = create_access_token(data={"sub": user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:8080")
+    redirect_url = f"{frontend_url}/auth/google/callback#access_token={access_token}&token_type=bearer"
+
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=redirect_url)
 
 @app.post("/create/board", response_model=BoardResponse, tags=["Create"])
 async def create_board(board: BoardCreate,
@@ -367,7 +400,15 @@ async def toggle_like(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    pin = await db.get(Pin, pin_id)
+    result = await db.execute(
+        select(Pin)
+        .where(Pin.id == pin_id)
+        .options(
+            joinedload(Pin.author),  # 🔥 Загружаем автора
+            selectinload(Pin.comments)  # 🔥 Загружаем комментарии
+        )
+    )
+    pin = result.scalar_one_or_none()
     if not pin:
         raise HTTPException(status_code=404, detail="Pin not found")
 
@@ -397,7 +438,14 @@ async def add_comment(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    pin = await db.get(Pin, pin_id)
+    result = await db.execute(
+        select(Pin)
+        .where(Pin.id == pin_id)
+        .options(
+            joinedload(Pin.author)
+        )
+    )
+    pin = result.scalar_one_or_none()
     if not pin:
         raise HTTPException(status_code=404, detail="Pin not found")
 

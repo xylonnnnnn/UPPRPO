@@ -17,5 +17,8 @@ if google_client_id and google_client_secret:
         server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
         client_kwargs={
             'scope': 'openid email profile'
+        },
+        request_kwargs={
+            'timeout': 30.0  # 30 секунд вместо стандартных 5
         }
     )
