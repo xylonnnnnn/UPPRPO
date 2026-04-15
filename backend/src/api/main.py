@@ -25,7 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from cache import pins_key_builder, invalidate_pins_cache
 from email_config import send_verification_email
 from google_auth import oauth
-from database import get_db, Base, init_db, reset_database
+from database import get_db, Base, reset_database
 from models import User, Pin, Board, PinLike, PinComments
 from schemas import UserCreate, Token, TokenData, VerifyEmail, PinCreate, PinResponse, \
     UserDelete, BoardCreate, BoardResponse, PaginatedResponse, PaginationMeta
