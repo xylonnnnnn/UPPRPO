@@ -395,12 +395,17 @@ async def create_pin(
     await invalidate_pins_cache()
     return result
 
-@app.get("/pin/{pin_id}", response_model=PinResponse, tags=["Pin"])
+@app.get("/pins/{pin_id}", response_model=PinResponse, tags=["Pin"])
 async def get_pin(pin_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     pin = (await db.execute(select(Pin).where(Pin.id == pin_id).options(joinedload(Pin.author),selectinload(Pin.comments)))).scalar_one_or_none()
 
     if not pin:
         raise HTTPException(status_code=404, detail="Pin not found")
+
+    pin_is_liked = (await db.execute(select(PinLike).where((PinLike.pin_id == pin_id) & (PinLike.user_id == current_user.id)))).scalar_one_or_none()
+
+    if pin_is_liked:
+        pin.is_liked = True
 
     return pin
 
@@ -572,6 +577,12 @@ async def change_user_description(
     await db.commit()
     await db.refresh(current_user)
 
+    return current_user
+
+@app.get("/user/me", response_model=UserProfile, tags=["User"])
+async def get_current_user_profile(
+    current_user: User = Depends(get_current_user)
+):
     return current_user
 
 # @app.get("/users/me", response_model=UserResponse)
