@@ -62,7 +62,7 @@ class BoardResponse(BaseModel):
     description: Optional[str] = None
     is_private: bool = False
     created_at: datetime
-    user_id: int
+    owner: UserPublic
 
     model_config = ConfigDict(from_attributes=True)
 

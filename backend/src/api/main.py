@@ -3,6 +3,7 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 from datetime import timedelta, datetime
+from typing import List
 
 import httpx
 from dotenv import load_dotenv
@@ -513,6 +514,13 @@ async def get_pins(
 
     return PaginatedResponse(items=items, meta=meta)
 
+@app.get("/boards", response_model=List[BoardResponse])
+async def get_boards(
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)):
+    boards = (await db.execute(select(Board).where(Board.user_id == current_user.id).options(selectinload(Board.owner)))).scalars().all()
+
+    return boards
 # @app.get("/users/me", response_model=UserResponse)
 # async def read_users_me(current_user: User = Depends(get_current_user)):
 #     return current_user
