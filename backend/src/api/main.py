@@ -395,6 +395,16 @@ async def create_pin(
     await invalidate_pins_cache()
     return result
 
+@app.get("/pin/{pin_id}", response_model=PinResponse, tags=["Pin"])
+async def get_pin(pin_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    pin = (await db.execute(select(Pin).where(Pin.id == pin_id).options(joinedload(Pin.author),selectinload(Pin.comments)))).scalar_one_or_none()
+
+    if not pin:
+        raise HTTPException(status_code=404, detail="Pin not found")
+
+    return pin
+
+
 @app.post("/pins/{pin_id}/like", response_model=PinResponse)
 async def toggle_like(
         pin_id: int,
