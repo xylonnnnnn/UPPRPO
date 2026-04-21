@@ -1,0 +1,8 @@
+aiogram
+asyncpg
+bcrypt<4.0.0
+greenlet
+httpx
+passlib[bcrypt]
+python-dotenv
+sqlalchemy
