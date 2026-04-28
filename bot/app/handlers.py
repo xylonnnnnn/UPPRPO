@@ -1,8 +1,8 @@
-import os
+import imghdr
+import uuid
 from pathlib import Path
 from typing import Optional
 
-import httpx
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -14,6 +14,15 @@ from db.crud import create_board, create_pin, get_user_boards, verify_user
 from db.database import session_factory
 
 router = Router()
+BASE_DIR = Path(__file__).resolve().parents[2]
+UPLOADS_DIR = BASE_DIR / "backend" / "src" / "api" / "uploads" / "pins"
+ALLOWED_IMAGE_TYPES = {"jpeg", "png", "gif", "webp"}
+EXTENSION_BY_TYPE = {
+    "jpeg": ".jpg",
+    "png": ".png",
+    "gif": ".gif",
+    "webp": ".webp",
+}
 
 # In-memory auth is enough for a running bot process. For production, persist this mapping.
 AUTH_USERS: dict[int, dict[str, int | str]] = {}
@@ -149,31 +158,17 @@ async def new_board_name(message: Message, state: FSMContext):
     await message.answer(f"Доска «{board.name}» создана. Теперь отправьте фото.")
 
 
-async def upload_image_to_cloudflare(file_path: str) -> Optional[str]:
-    account_id = os.getenv("CF_ACCOUNT_ID")
-    api_key = os.getenv("CF_IMAGES_API_KEY")
-    if not account_id or not api_key:
-        return None
+def save_image_to_server(file_path: Path) -> str:
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    file_bytes = file_path.read_bytes()
+    image_type = imghdr.what(None, h=file_bytes)
+    if image_type not in ALLOWED_IMAGE_TYPES:
+        raise RuntimeError("Поддерживаются только JPG, PNG, GIF и WEBP")
 
-    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/images/v1"
-    headers = {"Authorization": f"Bearer {api_key}"}
-
-    path = Path(file_path)
-    async with httpx.AsyncClient(timeout=60) as client:
-        with path.open("rb") as file:
-            response = await client.post(
-                url,
-                headers=headers,
-                files={"file": (path.name, file, "image/jpeg")},
-            )
-
-    response.raise_for_status()
-    result = response.json()
-    if not result.get("success"):
-        raise RuntimeError(str(result.get("errors") or "Cloudflare upload failed"))
-
-    image_id = result["result"]["id"]
-    return f"https://imagedelivery.net/{account_id}/{image_id}/public"
+    extension = EXTENSION_BY_TYPE[image_type]
+    destination = UPLOADS_DIR / f"{uuid.uuid4().hex}{extension}"
+    destination.write_bytes(file_bytes)
+    return f"/uploads/pins/{destination.name}"
 
 
 @router.message(PinUpload.photo, F.photo)
@@ -186,17 +181,10 @@ async def get_photo(message: Message, state: FSMContext):
     await message.bot.download(photo_file, destination=dst)
 
     try:
-        image_url = await upload_image_to_cloudflare(str(dst))
+        image_url = save_image_to_server(dst)
     except Exception as exc:
-        await message.answer(f"Не получилось загрузить картинку в Cloudflare: {exc}")
+        await message.answer(f"Не получилось сохранить картинку на сервере: {exc}")
         return
-
-    if not image_url:
-        image_url = str(dst)
-        await message.answer(
-            "Cloudflare не настроен, поэтому временно сохраню локальный путь. "
-            "Для отображения на сайте нужен публичный image_url."
-        )
 
     await state.update_data(image_url=image_url)
     await state.set_state(PinUpload.title)

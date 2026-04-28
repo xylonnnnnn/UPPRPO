@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from datetime import timedelta, datetime
 from typing import List
 
-import httpx
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
@@ -20,6 +19,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from schemas import PinResponse, UserPublic, UserProfile
 from sqlalchemy.orm import Session, declarative_base, selectinload, joinedload
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -38,11 +38,10 @@ from auth import (
 )
 from crud import get_user_by_email, get_user_by_username, create_user, verify_user_email, \
     create_google_user, get_user_by_id  # Из первого примера
+from storage import UPLOADS_DIR, ensure_upload_dirs, save_upload_file, image_path_to_url, delete_stored_image
 
 load_dotenv()
 
-CLOUDFLARE_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID")
-CLOUDFLARE_IMAGES_API_KEY = os.getenv("CF_IMAGES_API_KEY")
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
 
@@ -60,8 +59,7 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # await init_db()
-    # print("BD инициализирована")
+    ensure_upload_dirs()
     redis = aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
     FastAPICache.init(
         RedisBackend(redis),
@@ -75,6 +73,7 @@ async def lifespan(app: FastAPI):
     await redis.close()
 
 app = FastAPI(title="FastAPI Auth System", lifespan=lifespan)
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 app.add_middleware(
     SessionMiddleware,
@@ -134,7 +133,13 @@ async def delete_board(
         current_user: User = Depends(get_current_user)
 ):
     try:
-        board = (await db.execute(select(Board).where(Board.id == board_id))).scalar_one_or_none()
+        board = (
+            await db.execute(
+                select(Board)
+                .where(Board.id == board_id)
+                .options(selectinload(Board.pins))
+            )
+        ).scalar_one_or_none()
 
         if not board:
             raise HTTPException(
@@ -147,6 +152,8 @@ async def delete_board(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="У вас нет прав для удаления этой доски"
             )
+        for pin in board.pins:
+            delete_stored_image(pin.image_url)
         await db.delete(board)
         await db.commit()
         await invalidate_pins_cache()
@@ -175,6 +182,7 @@ async def delete_pin(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="У вас нет прав для удаления этого пина"
             )
+        delete_stored_image(pin.image_url)
         await db.delete(pin)
         await db.commit()
         await invalidate_pins_cache()
@@ -329,39 +337,8 @@ async def create_board(board: BoardCreate,
 
 @app.post("/upload/image")
 async def upload_image(file: UploadFile = File(...)):
-    print(f"🔍 Account ID: {CLOUDFLARE_ACCOUNT_ID}")
-    print(f"🔍 API Key starts with: {CLOUDFLARE_IMAGES_API_KEY[:10] if CLOUDFLARE_IMAGES_API_KEY else 'None'}...")
-
-    # 🔍 Проверка на пустоту
-    if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_IMAGES_API_KEY:
-        raise HTTPException(status_code=500, detail="Cloudflare credentials not configured")
-
-    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/images/v1"
-
-    print(f"🔍 Request URL: {url}")
-
-    headers = {"Authorization": f"Bearer {CLOUDFLARE_IMAGES_API_KEY}"}
-    file_content = await file.read()
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            url,
-            headers=headers,
-            files={"file": (file.filename, file_content, file.content_type)}
-        )
-        print(f"🔍 Response Status: {response.status_code}")
-        print(f"🔍 Response Body: {response.text}")  # ← Покажет полную ошибку от Cloudflare
-        result = response.json()
-
-    if result.get("success"):
-        image_id = result["result"]["id"]
-        return {
-            "image_url": f"https://imagedelivery.net/{CLOUDFLARE_ACCOUNT_ID}/{image_id}/public",
-            "image_id": image_id
-        }
-
-    print(f"❌ Cloudflare error: {result}")
-    raise HTTPException(status_code=500, detail=f"Ошибка загрузки: {result.get('errors', ['Unknown'])}")
+    image_path = await save_upload_file(file)
+    return {"image_url": image_path_to_url(image_path)}
 
 @app.post("/create/pins/", response_model=PinResponse, tags=["Create"])
 async def create_pin(
@@ -380,7 +357,7 @@ async def create_pin(
     # aspect_ratio = pin.image_width / pin.image_height if pin.image_width and pin.image_height else 1.0
 
     db_pin = Pin(
-        **pin.model_dump(),
+        **{**pin.model_dump(), "image_url": image_path_to_url(pin.image_url)},
         user_id=current_user.id,
         # aspect_ratio=aspect_ratio,
         likes_count=0

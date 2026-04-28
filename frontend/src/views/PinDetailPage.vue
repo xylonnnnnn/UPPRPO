@@ -31,8 +31,8 @@
       <!-- Изображение -->
       <div class="pin-image-wrapper">
         <img 
-          v-if="pin.image_url && isValidImageUrl(pin.image_url)" 
-          :src="pin.image_url" 
+          v-if="resolvedImageUrl" 
+          :src="resolvedImageUrl" 
           :alt="pin.title"
           @error="onImageError"
         >
@@ -142,6 +142,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { pinsApi } from '@/api/endpoints'
+import { resolveImageUrl } from '@/utils/image'
 
 const route = useRoute()
 const router = useRouter()
@@ -172,6 +173,8 @@ const isOwner = computed(() => {
   return pin.value?.author?.id === currentUserId.value
 })
 
+const resolvedImageUrl = computed(() => resolveImageUrl(pin.value?.image_url))
+
 // Загрузка пина
 const loadPin = async () => {
   loading.value = true
@@ -201,11 +204,6 @@ const loadPin = async () => {
 const onImageError = (e) => {
   e.target.style.display = 'none'
   e.target.parentElement.classList.add('no-image')
-}
-
-const isValidImageUrl = (url) => {
-  if (!url || typeof url !== 'string') return false
-  return url.startsWith('http://') || url.startsWith('https://')
 }
 
 const truncateUrl = (url, max = 40) => {

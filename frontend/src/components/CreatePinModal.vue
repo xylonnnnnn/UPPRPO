@@ -260,7 +260,7 @@ const removeImage = () => {
   if (fileInput.value) fileInput.value.value = ''
 }
 
-// 🔥 Загрузка изображения в Cloudflare
+// Загрузка изображения на сервер
 const uploadImage = async (file) => {
   uploading.value = true
   uploadProgress.value = 0

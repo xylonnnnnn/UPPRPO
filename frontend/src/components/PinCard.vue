@@ -2,7 +2,7 @@
   <div class="pin-card" @click="emit('click', pin.id)">
     <div class="image-wrapper">
       <img 
-        :src="isValidImageUrl(pin.image_url) ? pin.image_url : ''" 
+        :src="resolvedImageUrl" 
         :alt="pin.title" 
         loading="lazy" 
         @error="onImageError"
@@ -23,10 +23,10 @@
 </template>
 
 <script setup>
-// 🔥 Импортируем для ESLint
-import { defineProps, defineEmits } from 'vue'
+import { computed, defineProps, defineEmits } from 'vue'
+import { resolveImageUrl } from '@/utils/image'
 
-defineProps({
+const props = defineProps({
   pin: {
     type: Object,
     required: true
@@ -34,6 +34,7 @@ defineProps({
 })
 
 const emit = defineEmits(['like', 'click'])
+const resolvedImageUrl = computed(() => resolveImageUrl(props.pin?.image_url))
 
 // const onImageError = (e) => {
 //   e.target.src = 'https://via.placeholder.com/400x600?text=No+Image'
@@ -41,11 +42,6 @@ const emit = defineEmits(['like', 'click'])
 
 const getInitials = (username) => {
   return username?.[0]?.toUpperCase() || '?'
-}
-
-const isValidImageUrl = (url) => {
-  if (!url || typeof url !== 'string') return false
-  return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')
 }
 
 // 🔥 Заглушка при ошибке загрузки

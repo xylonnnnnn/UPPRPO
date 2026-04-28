@@ -49,6 +49,8 @@ services:
       - ./.env
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend/src/api/uploads:/app/uploads
     networks:
       - my-network
     depends_on:
