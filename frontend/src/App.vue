@@ -1,15 +1,10 @@
 <template>
-  <login-page></login-page>
+  <!-- 🔥 Это "окошко", куда Vue Router будет подставлять страницы -->
+  <router-view />
 </template>
 
-<script>
-import LoginPage from './views/LoginPage.vue'
-export default {
-  name: 'App',
-  components: {
-    LoginPage
-  }
-}
+<script setup>
+// Скрипт тут пока не нужен. Вся логика живёт в роутере и страницах.
 </script>
 
 <style>
@@ -19,6 +14,8 @@ export default {
   -moz-osx-font-smoothing: grayscale;
   text-align: center;
   color: #2c3e50;
-  margin-top: 60px;
+  margin-top: 0; /* убрал 60px, чтобы страницы занимали весь экран */
+  min-height: 100vh;
+  background: #f0f0f0;
 }
 </style>
