@@ -143,7 +143,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { pinsApi } from '@/api/endpoints'
+import { pinsApi, profileApi } from '@/api/endpoints'
 import { resolveImageUrl } from '@/utils/image'
 
 const route = useRoute()
@@ -165,9 +165,7 @@ const liking = ref(false)
 
 // ID текущего пользователя (для проверки прав)
 const currentUserId = computed(() => {
-  // Если у тебя есть эндпоинт /users/me — можно загружать данные пользователя
-  // Пока берём из токена (если хранишь payload) или заглушка
-  return 1 // 🔥 Заменить на реальное получение ID
+  return authStore.user?.id || null
 })
 
 // Проверка: принадлежит ли пин текущему пользователю
@@ -202,6 +200,14 @@ const loadPin = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const loadCurrentUser = async () => {
+  if (authStore.user?.id) return
+
+  const response = await profileApi.getMe()
+  authStore.user = response.data
+  localStorage.setItem('user_info', JSON.stringify(response.data))
 }
 
 // 🔥 Обработчики
@@ -315,7 +321,13 @@ onMounted(() => {
     router.push('/login')
     return
   }
-  loadPin()
+  loadCurrentUser()
+    .then(loadPin)
+    .catch((err) => {
+      console.error('Failed to load current user:', err)
+      error.value = err.response?.data?.detail || 'Не удалось загрузить текущего пользователя'
+      loading.value = false
+    })
 })
 </script>
 
